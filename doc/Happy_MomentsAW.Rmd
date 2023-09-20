@@ -7,6 +7,8 @@ HappyDB is a corpus of 100,000 crowd-sourced happy moments. The goal of the corp
 
 Here, I explore this data set and try to answer the question, "What makes people happy?"
 
+![](/Users/angelwang/Desktop/fall 2023/4243/ads-fall2023-project1-angelw29/figs/happy.png){width="50%"}
+
 ### Load all necessary packages
 
 From the packages' descriptions:
@@ -23,6 +25,7 @@ From the packages' descriptions:
 library(tidyverse)
 library(tidytext)
 library(ggplot2)
+library(grid)
 library(ngram)
 library(wordcloud)
 library(word2vec)
@@ -32,7 +35,7 @@ library(word2vec)
 
 First,I process the raw textual data 'cleaned_hm.csv' saved in $ data $ file by cleaning data, removing stopwords and creating a tidy version of texts which is saved in $ output $ file.
 
-```{r load data, warning=FALSE, message=FALSE}
+```{r load data, warning=FALSE, message=FALSE, echo=FALSE}
 hm_data <- read_csv("/Users/angelwang/Desktop/fall 2023/4243/ads-fall2023-project1-angelw29/output/processed_moments.csv")
 
 urlfile<-'https://raw.githubusercontent.com/rit-public/HappyDB/master/happydb/data/demographic.csv'
@@ -41,7 +44,7 @@ demo_data <- read_csv(urlfile)
 
 I choose a subset of the data out of the tidy version of texts and keep the required columns for analysis.
 
-```{r combining data, warning=FALSE, message=FALSE}
+```{r combining data, warning=FALSE, message=FALSE, echo= FALSE}
 hm_data <- hm_data %>%
   inner_join(demo_data, by = "wid") %>%
   select(wid,
@@ -77,8 +80,8 @@ plot_category <- ggplot(hm_data, aes(x = predicted_category, fill=as.factor(pred
   geom_bar(width = 0.8)+
    theme(legend.position="none")+
   coord_flip()
-
-grid.arrange(plot_gender, plot_category, ncol=2)
+plot_gender
+plot_category
 ```
 
 ```{r,message=FALSE,warning=FALSE,echo=FALSE}
@@ -152,7 +155,7 @@ plot_category_m <- ggplot(hm_data_m, aes(x = predicted_category, fill=as.factor(
   ggtitle('Happy Moment for Men in Categories')+
   xlab('categories')+
   coord_flip()
-grid.arrange(plot_category_f, plot_category_m, ncol=2)
+
 ```
 
 The histogram clearly indicates that women experience the majority of their happy moments in the realm of affection, while for men, their peak happy moments are linked to achievements. This sheds light on the potential reason behind the higher levels of competitiveness observed in boys, highlighted by the highest TF-IDF within the achievement category, appears to significantly amplify their happiness.
@@ -245,6 +248,8 @@ lookslike
 ```
 
 Analyzing the word clouds, a standout term for both genders is "friend." Through embeddings, we find that "friend" is strongly correlated with words like "family," "familyas," and "fun." However, for men, it also correlates with "gap" and "guard." This suggests that for women, the association between "friend" and "family" is prominent, possibly indicating a close familial bond. Interestingly, both genders share a strong association between "friend" and "fun," with a similarity score of 0.92 for women and 0.96 for men, signifying a common joy derived from companionship.
+
+![](/Users/angelwang/Desktop/fall 2023/4243/ads-fall2023-project1-angelw29/figs/friend.png)
 
 Now, let's delve into the specific activities that each gender enjoys with their friends, bringing the most delight.
 
@@ -409,6 +414,7 @@ wordcloud(word_count_notUSA$word,word_count_notUSA$n ,
           random.color=FALSE,
           colors=brewer.pal(1,"Accent"))
 ```
+
 Analyzing word clouds, it's evident that the term "friend" is consistently the most prevalent regardless of the geographic region. The moments spent with friends not only bring happiness to us but resonate as joyful experiences for people across different parts of the world.
 
 ```{r,message=FALSE,warning=FALSE,echo=FALSE}
@@ -430,7 +436,7 @@ word_count_notUSA_friend<- word_count_notUSA_friend[-c(which(word_count_notUSA_f
 
 unique_word <- anti_join(word_count_notUSA_friend, word_count_USA_friend, by = "word")
 wordcloud(unique_word$word,unique_word$n ,
-          scale=c(3,0.1),
+          scale=c(5,0.1),
           max.words=100,
           min.freq=1,
           random.order=FALSE,
@@ -439,6 +445,7 @@ wordcloud(unique_word$word,unique_word$n ,
           random.color=FALSE,
           colors=brewer.pal(1,"Accent"))
 ```
+
 The word cloud displays words exclusively extracted from entries outside the United States. A notable observation is the conspicuous absence of terms representing particular activities. This intriguingly indicates a common trend: people in various countries participate in analogous activities with their friends to attain happiness.
 
 This pattern underscores a universal inclination toward certain shared pursuits that foster joy and fulfillment among diverse cultures. Despite geographical and cultural differences, the essence of bonding with friends through similar activities appears to be a fundamental element of human happiness transcending borders.
@@ -458,9 +465,9 @@ hm_data_notUSA[grepl("friend",hm_data_notUSA$text),"original_hm"][1:5,]
 
 ### Part 7 - Conclusion
 
-1.People commonly find their sources of happiness either through achieving personal objectives or through experiencing affection. It's worth noting that men tend to experience happiness by completing tasks or reaching milestones, while women often find happiness through meaningful relationships and connections.
+1. People commonly find their sources of happiness either through achieving personal objectives or through experiencing affection. It's worth noting that men tend to experience happiness by completing tasks or reaching milestones, while women often find happiness through meaningful relationships and connections.
 
-2.When describing their moments of happiness, men often employ action-oriented verbs, accentuating their accomplishments. Conversely, women commonly link individuals or relationships with the actions that lead to their happiness.
+2. When describing their moments of happiness, men often employ action-oriented verbs, accentuating their accomplishments. Conversely, women commonly link individuals or relationships with the actions that lead to their happiness.
 
 3. The term "friend" stands out in narratives of happiness. Both men and women value the companionship of friends; however, their preferred activities with friends diverge. Men generally relish "game," whereas women derive joy from "celebration" and engaging in "surprise" activities. A commonality among both groups is their enjoyment of shared meals and enjoying birthdays with their friends.
 
