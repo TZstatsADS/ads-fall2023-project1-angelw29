@@ -1,0 +1,410 @@
+---
+title: "Manual for Happinese"
+author: "Angel Wang"
+---
+
+HappyDB is a corpus of 100,000 crowd-sourced happy moments via Amazon's Mechanical Turk. You can read more about it on https://arxiv.org/abs/1801.07746.
+
+Here, we explore this data set and try to answer the question, "What makes people happy?"
+
+### Load all necessary packages
+
+From the packages' descriptions:
+
++ `tidyverse` is an opinionated collection of R packages designed for data science. All packages share an underlying design philosophy, grammar, and data structures;
++ `tidytext` allows text mining using 'dplyr', 'ggplot2', and other tidy tools;
++ `DT` provides an R interface to the JavaScript library DataTables;
++ `scales` map data to aesthetics, and provide methods for automatically determining breaks and labels for axes and legends;
++ `wordcloud2` provides an HTML5 interface to wordcloud for data visualization;
++ `gridExtra` contains miscellaneous functions for "grid" graphics;
++ `ngram` is for constructing n-grams (“tokenizing”), as well as generating new text based on the n-gram structure of a given text input (“babbling”);
+
+
+```{r load libraries, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(tidytext)
+library(DT)
+library(scales)
+library(ggplot2)
+library(gridExtra)
+library(ngram)
+library(wordcloud)
+library(udpipe)
+library(word2vec)
+```
+
+### Part 1 - Load the processed text data along with demographic information on contributors
+
+First,I process the raw textual data 'cleaned_hm.csv' saved in $ data $ file by cleaning data, removing stopwords and creating a tidy version of texts which is saved in $ output $ file.
+
+```{r load data, warning=FALSE, message=FALSE}
+hm_data <- read_csv("/Users/angelwang/Desktop/fall 2023/4243/ads-fall2023-project1-angelw29/output/processed_moments.csv")
+
+urlfile<-'https://raw.githubusercontent.com/rit-public/HappyDB/master/happydb/data/demographic.csv'
+demo_data <- read_csv(urlfile)
+```
+
+I choose a subset of the data out of the tidy version of texts and keep the required columns for analysis.
+
+```{r combining data, warning=FALSE, message=FALSE}
+hm_data <- hm_data %>%
+  inner_join(demo_data, by = "wid") %>%
+  select(wid,
+         original_hm,
+         gender, 
+         marital, 
+         parenthood,
+         reflection_period,
+         age, 
+         country, 
+         predicted_category, 
+         text) %>%
+  mutate(count = sapply(hm_data$text, wordcount)) %>%
+  filter(gender %in% c("m", "f")) %>%
+  filter(marital %in% c("single", "married")) %>%
+  filter(parenthood %in% c("n", "y")) %>%
+  filter(reflection_period %in% c("24h", "3m")) %>%
+  mutate(reflection_period = fct_recode(reflection_period, 
+                                        months_3 = "3m", hours_24 = "24h"))
+```
+
+### Part 2 - Explore the participants? 
+
+```{r, warning=FALSE, message=FALSE}
+nrow(hm_data)
+nrow(hm_data[hm_data$gender == 'f',])
+nrow(hm_data[hm_data$gender == 'm',])
+
+plot_gender <- ggplot(hm_data, aes(x = gender)) +
+  geom_bar(width = 0.8)
+
+plot_category <- ggplot(hm_data, aes(x = predicted_category, fill=as.factor(predicted_category))) +
+  geom_bar(width = 0.8)+
+   theme(legend.position="none")+
+  coord_flip()
+
+grid.arrange(plot_gender, plot_category, ncol=2)
+```
+Why do the things that makes me happy not excite her/him as well?
+
+It is one of the questions that comes up most in relationships (Also, one of mine) Maybe by taking a look 
+
+at how others feel happy, there would be some guidance to that question.
+
+
+In total, there are 94508 happy moments that got captured from 38708 females and 55800 males based on 7
+
+categories. Majority of the happy moments lay in affection and achievement moments, but would the distribution
+
+be the same for male and female?
+
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+hm_data_f <- hm_data[hm_data$gender=="f",]
+bag_of_words_f <-  hm_data_f %>%
+  unnest_tokens(word, text)
+
+word_count_f <- bag_of_words_f %>%
+  count(word, sort = TRUE)
+
+plot_category_f <- ggplot(hm_data_f, aes(x = predicted_category, fill=as.factor(predicted_category))) +
+  geom_bar(width = 0.8)+
+   theme(legend.position="none")+
+  ggtitle('Happy Moment for Women in Categories')+
+  xlab('categories')+
+    coord_flip()
+
+hm_data_m <- hm_data[hm_data$gender=="m",]
+bag_of_words_m <-  hm_data_m %>%
+  unnest_tokens(word, text)
+
+word_count_m <- bag_of_words_m %>%
+  count(word, sort = TRUE)
+
+plot_category_m <- ggplot(hm_data_m, aes(x = predicted_category, fill=as.factor(predicted_category))) +
+  geom_bar(width = 0.8)+
+   theme(legend.position="none")+
+  ggtitle('Happy Moment for Men in Categories')+
+  xlab('categories')+
+  coord_flip()
+grid.arrange(plot_category_f, plot_category_m, ncol=2)
+```
+```{r, warning=FALSE, message=FALSE}
+usenet_words <- hm_data %>%
+  unnest_tokens(word, text)
+
+words_by_category <- usenet_words %>%
+  count(predicted_category, word, sort = TRUE) %>%
+  ungroup()
+
+tf_idf <- words_by_category %>%
+  bind_tf_idf(word, predicted_category, n) %>%
+  arrange(desc(tf_idf))
+
+tf_idf %>%
+  group_by(predicted_category) %>%
+  slice_max(tf_idf, n = 12) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, tf_idf)) %>%
+  ggplot(aes(tf_idf, word, fill = predicted_category)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ predicted_category, scales = "free") +
+  labs(x = "tf-idf", y = NULL)
+```
+
+
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+country_dist <- hm_data %>% group_by(country) %>% 
+  summarise(total_count=n(),
+            .groups = 'drop') %>% 
+  as.data.frame()
+
+ggplot(na.omit(country_dist), aes(x="", y=total_count, fill=country)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar(theta='y')
+```
+
+Most entries are from US, second IND
+
+
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+hm_data_USA <- hm_data[hm_data$country=="USA",]
+bag_of_words_USA <-  hm_data_USA %>%
+  unnest_tokens(word, text)
+
+word_count_USA <- bag_of_words_USA %>%
+  count(word, sort = TRUE)
+
+word_count_USA[1:10,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "               Word Frequency in Happy Moments (Affection) for Women")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+
+hm_data_notUSA <- hm_data[hm_data$country!="USA",]
+bag_of_words_notUSA <-  hm_data_notUSA %>%
+  unnest_tokens(word, text)
+
+word_count_notUSA <- bag_of_words_notUSA %>%
+  count(word, sort = TRUE)
+
+word_count_notUSA[1:10,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "               Word Frequency in Happy Moments (Affection) for Women")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+hm_data_f_affection <- hm_data_f[hm_data_f$predicted_category=="affection",]
+
+bag_of_words_f_affection <-  hm_data_f_affection %>%
+  unnest_tokens(word, text)
+
+word_count_f_affection <- bag_of_words_f_affection %>%
+  count(word, sort = TRUE)
+
+word_count_f_affection[1:10,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "               Word Frequency in Happy Moments (Affection) for Women")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+hm_data_m_achievement <- hm_data_m[hm_data_m$predicted_category=="achievement",]
+
+bag_of_words_m_achievement <-  hm_data_m_achievement %>%
+  unnest_tokens(word, text)
+
+word_count_m_achievement <- bag_of_words_m_achievement %>%
+  count(word, sort = TRUE)
+
+ word_count_m_achievement[1:10,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "               Word Frequency in Happy Moments (Achievement) for Men")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+The observation that word frequencies in the descriptions of happy moments show a pattern where women tend to mention nouns, often related to people like "husband," "son/daughter," or "family," while men tend to use verbs describing actions like "bought," "received," or "found" can be fascinating. Surrounded by those people, women would be happier, while for men doing things is more valuable. Does that mean all men need is work? Maybe not
+
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+par(mfrow=c(1,2))
+wordcloud(word_count_f$word,word_count_f$n ,
+          scale=c(3,0.1),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Reds"))
+
+wordcloud(word_count_m$word,word_count_m$n ,
+          scale=c(3,0.1),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Blues"))
+```
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+x <- tolower(hm_data_f$text)
+model <- word2vec(x = x, type = "cbow", dim = 15, iter = 20)
+embedding <- as.matrix(model)
+embedding <- predict(model, c("friend"), type = "embedding")
+lookslike <- predict(model, c("friend"), type = "nearest", top_n = 15)
+lookslike
+```
+
+
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+x <- tolower(hm_data_m$text)
+model <- word2vec(x = x, type = "cbow", dim = 15, iter = 20)
+embedding <- as.matrix(model)
+embedding <- predict(model, c("friend"), type = "embedding")
+lookslike <- predict(model, c("friend"), type = "nearest", top_n = 15)
+lookslike
+```
+
+
+It seems that for both genders FRIENDS are the people that can bring us the most happiness. Who doesn't love to spend with their friends? I personally love to have them come over and just talk. But how about the boys do they also enjoy this kind of activity?
+
+```{r, warning=FALSE, message=FALSE}
+hm_data_f_friend <- hm_data_f[grepl("friend",hm_data_f$text),]
+bag_of_words_f_friend <-  hm_data_f_friend %>%
+  unnest_tokens(word, text)
+word_count_f_friend <- bag_of_words_f_friend %>%
+  count(word, sort = TRUE)
+word_count_f_friend<- word_count_f_friend[-c(which(word_count_f_friend$word=="friend"),which(word_count_f_friend$word=="girlfriend"),which(word_count_f_friend$word=="boyfriend")),]
+word_count_f_friend[1:15,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+```{r, warning=FALSE, message=FALSE}
+hm_data_m_friend <- hm_data_m[grepl("friend",hm_data_m$text),]
+bag_of_words_m_friend <-  hm_data_m_friend %>%
+  unnest_tokens(word, text)
+word_count_m_friend <- bag_of_words_m_friend %>%
+  count(word, sort = TRUE)
+word_count_m_friend<- word_count_m_friend[-c(which(word_count_m_friend$word=="friend"),which(word_count_m_friend$word=="girlfriend"),which(word_count_m_friend$word=="boyfriend")),]
+word_count_m_friend[1:15,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+bag_of_words_m_friend <- hm_data_m_friend %>% 
+  unnest_tokens(word, text, token = "ngrams", n = 2) %>% 
+  separate(word, c("word1", "word2"), sep = " ") %>% 
+  filter(word1 == "friend" | word2 == 'friend' ) %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>% 
+  unite(word,word1, word2, sep = " ") 
+word_count_m_friend <- bag_of_words_m_friend %>%
+  count(word, sort = TRUE)
+word_count_m_friend[2:11,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "               Word Frequency in Happy Moments (Achievement) for Men")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+hm_data_m_friend[grepl("game",hm_data_m_friend$text),"original_hm"][1:4,]
+```
+
+```{r, warning=FALSE, message=FALSE}
+bag_of_words_f_friend <- hm_data_f_friend %>% 
+  unnest_tokens(word, text, token = "ngrams", n = 2) %>% 
+  separate(word, c("word1", "word2"), sep = " ") %>% 
+  filter(word1 == "friend" | word2 == 'friend' ) %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>% 
+  unite(word,word1, word2, sep = " ") 
+word_count_f_friend <- bag_of_words_f_friend %>%
+  count(word, sort = TRUE)
+word_count_f_friend[2:11,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "               Word Frequency in Happy Moments (Achievement) for Men")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+
+```{r, warning=FALSE, message=FALSE}
+hm_data_f_friend[grepl("dinner",hm_data_f_friend$text),"original_hm"][1:4,]
+```
+
+It seems that for both genders FRIENDS are the people that bring us the most happiness. Who doesn't love to spend with their friends? I personally love to have them come over and just talk. But how about the boys do they also enjoy this kind of activity?
+
+
+```{r}
+hm_data_notUSA_friend <- hm_data_notUSA[grepl("friend",hm_data_notUSA$text),]
+bag_of_words_notUSA_friend <-  hm_data_notUSA_friend %>%
+  unnest_tokens(word, text)
+word_count_notUSA_friend <- bag_of_words_notUSA_friend %>%
+  count(word, sort = TRUE)
+word_count_notUSA_friend<- word_count_notUSA_friend[-c(which(word_count_notUSA_friend$word=="friend"),which(word_count_notUSA_friend$word=="girlfriend"),which(word_count_notUSA_friend$word=="boyfriend")),]
+word_count_notUSA_friend[1:15,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+
+```{r, warning=FALSE, message=FALSE}
+bag_of_words_notUSA_friend <- hm_data_notUSA_friend %>% 
+  unnest_tokens(word, text, token = "ngrams", n = 2) %>% 
+  separate(word, c("word1", "word2"), sep = " ") %>% 
+  filter(word1 == "friend" | word2 == 'friend' ) %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>% 
+  unite(word,word1, word2, sep = " ") 
+word_count_notUSA_friend <- bag_of_words_notUSA_friend %>%
+  count(word, sort = TRUE)
+word_count_notUSA_friend[2:11,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "               Word Frequency in Happy Moments (Achievement) for Men")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+
+
+

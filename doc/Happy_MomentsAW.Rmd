@@ -1,0 +1,471 @@
+---
+title: "Manual for Happinese (Friend edition)"
+author: "Angel Wang"
+---
+
+HappyDB is a corpus of 100,000 crowd-sourced happy moments. The goal of the corpus is to advance the state of the art of understanding the causes of happiness that can be gleaned from text.
+
+Here, I explore this data set and try to answer the question, "What makes people happy?"
+
+### Load all necessary packages
+
+From the packages' descriptions:
+
++ `tidyverse` is an opinionated collection of R packages designed for data science. All packages share an underlying design philosophy, grammar, and data structures;
++ `tidytext` allows text mining using 'dplyr', 'ggplot2', and other tidy tools;
++ `ggplot2` produces statistical, or data, graphics；
++ `wordcloud` provides a visual representation of text data;
++ `ngram` is for constructing n-grams (“tokenizing”), as well as generating new text based on the n-gram structure of a given text input (“babbling”);
++ `word2vec` learns vector representations of words by continuous bag of words and skip-gram implementations
+
+
+```{r load libraries, warning=FALSE, message=FALSE, echo = FALSE}
+library(tidyverse)
+library(tidytext)
+library(ggplot2)
+library(ngram)
+library(wordcloud)
+library(word2vec)
+```
+
+### Part 1 - Load the processed text data along with demographic information on contributors
+
+First,I process the raw textual data 'cleaned_hm.csv' saved in $ data $ file by cleaning data, removing stopwords and creating a tidy version of texts which is saved in $ output $ file.
+
+```{r load data, warning=FALSE, message=FALSE}
+hm_data <- read_csv("/Users/angelwang/Desktop/fall 2023/4243/ads-fall2023-project1-angelw29/output/processed_moments.csv")
+
+urlfile<-'https://raw.githubusercontent.com/rit-public/HappyDB/master/happydb/data/demographic.csv'
+demo_data <- read_csv(urlfile)
+```
+
+I choose a subset of the data out of the tidy version of texts and keep the required columns for analysis.
+
+```{r combining data, warning=FALSE, message=FALSE}
+hm_data <- hm_data %>%
+  inner_join(demo_data, by = "wid") %>%
+  select(wid,
+         original_hm,
+         gender, 
+         marital, 
+         parenthood,
+         reflection_period,
+         age, 
+         country, 
+         predicted_category, 
+         text) %>%
+  mutate(count = sapply(hm_data$text, wordcount)) %>%
+  filter(gender %in% c("m", "f")) %>%
+  filter(marital %in% c("single", "married")) %>%
+  filter(parenthood %in% c("n", "y")) %>%
+  filter(reflection_period %in% c("24h", "3m")) %>%
+  mutate(reflection_period = fct_recode(reflection_period, 
+                                        months_3 = "3m", hours_24 = "24h"))
+```
+
+### Part 2 - Explore the participants. Who's and what kind happy moments are we looking at?
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+nrow(hm_data)
+nrow(hm_data[hm_data$gender == 'f',])
+nrow(hm_data[hm_data$gender == 'm',])
+
+plot_gender <- ggplot(hm_data, aes(x = gender)) +
+  geom_bar(width = 0.8)
+
+plot_category <- ggplot(hm_data, aes(x = predicted_category, fill=as.factor(predicted_category))) +
+  geom_bar(width = 0.8)+
+   theme(legend.position="none")+
+  coord_flip()
+
+grid.arrange(plot_gender, plot_category, ncol=2)
+```
+
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+country_dist <- hm_data %>% group_by(country) %>% 
+  summarise(total_count=n(),
+            .groups = 'drop') %>% 
+  as.data.frame()
+
+ggplot(na.omit(country_dist), aes(x="", y=total_count, fill=country)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar(theta='y')
+```
+
+Among the 94,506 curated happy moments, 38,707 were shared by women, and 55,799 were shared by men. The pie chart demonstrates a significant majority of these joyful moments originate from the United States, followed by India, with the rest of the world contributing fewer entries to this specific dataset. The category plot provides a clear view that most happy moments fall under the categories of affection and achievement. This observation aligns with expectations, as these two categories constitute the largest share of happy moments. For instance, categories such as nature and exercise might not resonate as happy moments for individuals (like myself) who do not particularly enjoy going outdoors or find exercise tiresome. Exploring the words associated with each category could offer deeper insights into what precisely brings individuals happiness in these respective categories.
+
+```{r, warning=FALSE, message=FALSE, echo= FALSE}
+usenet_words <- hm_data %>%
+  unnest_tokens(word, text)
+
+words_by_category <- usenet_words %>%
+  count(predicted_category, word, sort = TRUE) %>%
+  ungroup()
+
+tf_idf <- words_by_category %>%
+  bind_tf_idf(word, predicted_category, n) %>%
+  arrange(desc(tf_idf))
+
+tf_idf %>%
+  group_by(predicted_category) %>%
+  slice_max(tf_idf, n = 12) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, tf_idf)) %>%
+  ggplot(aes(tf_idf, word, fill = predicted_category)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ predicted_category, scales = "free") +
+  labs(x = "tf-idf", y = NULL)
+```
+
+TF-IDF (Term Frequency-Inverse Document Frequency) is a technique that evaluates word importance in a document based on their frequency. In my analysis, I focused on the most frequent words within the categories of achievement and affection, considering these categories as central to most happy moments. In the achievement category, prevalent words like "won," "job," and "bonus" stood out. Conversely, in the affection category, terms closely associated with significant relationships such as "daughter" and "family" were the most commonly mentioned. I found a strong personal connection with these words and recognized their significance in describing numerous happy moments.
+
+
+Now, let's explore the distinctions between men and women, as personal experiences suggest that what brings happiness to girls may not necessarily elicit the same level of excitement in boys. Is there indeed a disparity, and if so, how significant is it?
+
+### Part 3 - Subset the data. When do women feel happy? And when do men?
+
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+hm_data_f <- hm_data[hm_data$gender=="f",]
+bag_of_words_f <-  hm_data_f %>%
+  unnest_tokens(word, text)
+
+word_count_f <- bag_of_words_f %>%
+  count(word, sort = TRUE)
+
+plot_category_f <- ggplot(hm_data_f, aes(x = predicted_category, fill=as.factor(predicted_category))) +
+  geom_bar(width = 0.8)+
+   theme(legend.position="none")+
+  ggtitle('Happy Moment for Women in Categories')+
+  xlab('categories')+
+    coord_flip()
+
+hm_data_m <- hm_data[hm_data$gender=="m",]
+bag_of_words_m <-  hm_data_m %>%
+  unnest_tokens(word, text)
+
+word_count_m <- bag_of_words_m %>%
+  count(word, sort = TRUE)
+
+plot_category_m <- ggplot(hm_data_m, aes(x = predicted_category, fill=as.factor(predicted_category))) +
+  geom_bar(width = 0.8)+
+   theme(legend.position="none")+
+  ggtitle('Happy Moment for Men in Categories')+
+  xlab('categories')+
+  coord_flip()
+grid.arrange(plot_category_f, plot_category_m, ncol=2)
+```
+
+The histogram clearly indicates that women experience the majority of their happy moments in the realm of affection, while for men, their peak happy moments are linked to achievements. This sheds light on the potential reason behind the higher levels of competitiveness observed in boys, highlighted by the highest TF-IDF within the achievement category, appears to significantly amplify their happiness.
+
+
+```{r, warning=FALSE, message=FALSE, echo = FALSE}
+hm_data_f_affection <- hm_data_f[hm_data_f$predicted_category=="affection",]
+
+bag_of_words_f_affection <-  hm_data_f_affection %>%
+  unnest_tokens(word, text)
+
+word_count_f_affection <- bag_of_words_f_affection %>%
+  count(word, sort = TRUE)
+
+word_count_f_affection[1:10,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "               Word Frequency in Happy Moments (Affection) for Women")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+
+Given that affection emerges as the primary focus for women, a detailed examination of word frequency within the top 10 words (excluding "home" and "love") reveals that all the notable terms are related to family members. For women, the presence of loved ones is paramount for experiencing happiness. As for men, what contributes most to their happiness?
+
+```{r, warning=FALSE, message=FALSE, echo = FALSE}
+hm_data_m_achievement <- hm_data_m[hm_data_m$predicted_category=="achievement",]
+
+bag_of_words_m_achievement <-  hm_data_m_achievement %>%
+  unnest_tokens(word, text)
+
+word_count_m_achievement <- bag_of_words_m_achievement %>%
+  count(word, sort = TRUE)
+
+ word_count_m_achievement[1:10,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "               Word Frequency in Happy Moments (Achievement) for Men")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+
+On the flip side, in the case of men, my focus was directed towards analyzing word frequency related to achievements, as it emerged as their primary category for happy moments. Notably, words like "car," "job," and "money" stood out, emphasizing possessions or financial aspects. However, the majority of words were action-oriented (e.g., "bought," "received"), highlighting the significance of accomplishing meaningful actions for men in experiencing happiness. In contrast, for women, the emphasis on personal achievements appears to be less prominent when reflecting on their happy moments.
+
+
+Does this imply that men only seek fulfillment through work? Probably not, considering that affection is also a significant category for them. Therefore, perhaps we should investigate who the individuals are that contribute to making men feel happy.
+
+### Part 4 - Discover our similarity. Who is the ultimate one that can bring the happiness?
+
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+par(mfrow=c(1,2))
+wordcloud(word_count_f$word,word_count_f$n ,
+          scale=c(3,0.1),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Reds"))
+
+wordcloud(word_count_m$word,word_count_m$n ,
+          scale=c(3,0.1),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Blues"))
+```
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+x <- tolower(hm_data_f$text)
+model <- word2vec(x = x, type = "cbow", dim = 10, iter =20)
+embedding <- as.matrix(model)
+embedding <- predict(model, c("friend"), type = "embedding")
+lookslike <- predict(model, c("friend"), type = "nearest", top_n = 10)
+lookslike
+```
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+x <- tolower(hm_data_m$text)
+model <- word2vec(x = x, type = "cbow", dim = 10, iter = 20)
+embedding <- as.matrix(model)
+embedding <- predict(model, c("friend"), type = "embedding")
+lookslike <- predict(model, c("friend"), type = "nearest", top_n = 10)
+lookslike
+```
+
+Analyzing the word clouds, a standout term for both genders is "friend." Through embeddings, we find that "friend" is strongly correlated with words like "family," "familyas," and "fun." However, for men, it also correlates with "gap" and "guard." This suggests that for women, the association between "friend" and "family" is prominent, possibly indicating a close familial bond. Interestingly, both genders share a strong association between "friend" and "fun," with a similarity score of 0.92 for women and 0.96 for men, signifying a common joy derived from companionship.
+
+Now, let's delve into the specific activities that each gender enjoys with their friends, bringing the most delight.
+
+### Part 5 - Take a closer look within the moments with friend
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+hm_data_f_friend <- hm_data_f[grepl("friend",hm_data_f$text),]
+bag_of_words_f_friend <-  hm_data_f_friend %>%
+  unnest_tokens(word, text)
+word_count_f_friend <- bag_of_words_f_friend %>%
+  count(word, sort = TRUE)
+word_count_f_friend<- word_count_f_friend[-c(which(word_count_f_friend$word=="friend"),which(word_count_f_friend$word=="girlfriend"),which(word_count_f_friend$word=="boyfriend"),which(word_count_f_friend$word=="family")),]
+word_count_f_friend[1:15,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+hm_data_m_friend <- hm_data_m[grepl("friend",hm_data_m$text),]
+bag_of_words_m_friend <-  hm_data_m_friend %>%
+  unnest_tokens(word, text)
+word_count_m_friend <- bag_of_words_m_friend %>%
+  count(word, sort = TRUE)
+word_count_m_friend<- word_count_m_friend[-c(which(word_count_m_friend$word=="friend"),which(word_count_m_friend$word=="girlfriend"),which(word_count_m_friend$word=="boyfriend"), which(word_count_m_friend$word=="family")),]
+word_count_m_friend[1:15,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+par(mfrow=c(1,2))
+unique_word <- anti_join(word_count_f_friend, word_count_m_friend, by = "word")
+wordcloud(unique_word$word,unique_word$n ,
+          scale=c(1.5,0.1),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Reds"))
+
+unique_word <- anti_join(word_count_m_friend, word_count_f_friend, by = "word")
+wordcloud(unique_word$word,unique_word$n ,
+          scale=c(3,0.1),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Blues"))
+```
+
+
+Except for special events like "birthdays," women generally lean towards activities involving "surprises" and "celebrations" with their friends, whereas men typically find enjoyment in "playing" and participating in "games." However, both genders equally savor "dinners" and "parties." In the word cloud, exclusive words used by women are highlighted in red, while those used solely by men are depicted in blue.
+
+Using bigrams, the result also supports the same finding from above.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+bag_of_words_f_friend <- hm_data_f_friend %>% 
+  unnest_tokens(word, text, token = "ngrams", n = 2) %>% 
+  separate(word, c("word1", "word2"), sep = " ") %>% 
+  filter(word1 == "friend" | word2 == 'friend' ) %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>% 
+  unite(word,word1, word2, sep = " ") 
+word_count_f_friend <- bag_of_words_f_friend %>%
+  count(word, sort = TRUE)
+word_count_f_friend[2:11,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "               Word Frequency in Happy Moments (Achievement) for Men")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+bag_of_words_m_friend <- hm_data_m_friend %>% 
+  unnest_tokens(word, text, token = "ngrams", n = 2) %>% 
+  separate(word, c("word1", "word2"), sep = " ") %>% 
+  filter(word1 == "friend" | word2 == 'friend' ) %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>% 
+  unite(word,word1, word2, sep = " ") 
+word_count_m_friend <- bag_of_words_m_friend %>%
+  count(word, sort = TRUE)
+word_count_m_friend[2:11,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "               Word Frequency in Happy Moments (Achievement) for Men")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+
+Below are some happy moments that related to dinner and party for women:
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+hm_data_f_friend[grepl("dinner",hm_data_f_friend$text),"original_hm"][1:2,]
+```
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+hm_data_f_friend[grepl("party",hm_data_f_friend$text),"original_hm"][1:2,]
+```
+Below are some happy moments that related to dinner and party for men:
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+hm_data_m_friend[grepl("dinner",hm_data_m_friend$text),"original_hm"][1:2,]
+```
+```{r, warning=FALSE, message=FALSE, echo = FALSE}
+hm_data_m_friend[grepl("party",hm_data_m_friend$text),"original_hm"][1:2,]
+```
+
+### Part 6 - Difference based on region. Do we gain our happiness from same thing?
+
+Given that a majority of the entries are from the USA, I am intrigued to understand whether the sources of happiness are similar between the rest of the world and us within this state.
+
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+par(mfrow=c(1,2))
+hm_data_USA <- hm_data[hm_data$country=="USA",]
+bag_of_words_USA <-  hm_data_USA %>%
+  unnest_tokens(word, text)
+
+word_count_USA <- bag_of_words_USA %>%
+  count(word, sort = TRUE)
+wordcloud(word_count_USA$word,word_count_USA$n ,
+          scale=c(3,0.1),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(6,"RdBu"))
+
+
+hm_data_notUSA <- hm_data[hm_data$country!="USA",]
+bag_of_words_notUSA <-  hm_data_notUSA %>%
+  unnest_tokens(word, text)
+
+word_count_notUSA <- bag_of_words_notUSA %>%
+  count(word, sort = TRUE)
+
+wordcloud(word_count_notUSA$word,word_count_notUSA$n ,
+          scale=c(3,0.1),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(1,"Accent"))
+```
+Analyzing word clouds, it's evident that the term "friend" is consistently the most prevalent regardless of the geographic region. The moments spent with friends not only bring happiness to us but resonate as joyful experiences for people across different parts of the world.
+
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+par(mfrow=c(1,2))
+hm_data_USA_friend <- hm_data_USA[grepl("friend",hm_data_USA$text),]
+bag_of_words_USA_friend <-  hm_data_USA_friend %>%
+  unnest_tokens(word, text)
+word_count_USA_friend <- bag_of_words_USA_friend %>%
+  count(word, sort = TRUE)
+word_count_USA_friend<- word_count_USA_friend[-c(which(word_count_USA_friend$word=="friend"),which(word_count_USA_friend$word=="girlfriend"),which(word_count_USA_friend$word=="boyfriend"), which(word_count_USA_friend$word=="family")),]
+
+
+hm_data_notUSA_friend <- hm_data_notUSA[grepl("friend",hm_data_notUSA$text),]
+bag_of_words_notUSA_friend <-  hm_data_notUSA_friend %>%
+  unnest_tokens(word, text)
+word_count_notUSA_friend <- bag_of_words_notUSA_friend %>%
+  count(word, sort = TRUE)
+word_count_notUSA_friend<- word_count_notUSA_friend[-c(which(word_count_notUSA_friend$word=="friend"),which(word_count_notUSA_friend$word=="girlfriend"),which(word_count_notUSA_friend$word=="boyfriend"), which(word_count_notUSA_friend$word=="family")),]
+
+unique_word <- anti_join(word_count_notUSA_friend, word_count_USA_friend, by = "word")
+wordcloud(unique_word$word,unique_word$n ,
+          scale=c(3,0.1),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(1,"Accent"))
+```
+The word cloud displays words exclusively extracted from entries outside the United States. A notable observation is the conspicuous absence of terms representing particular activities. This intriguingly indicates a common trend: people in various countries participate in analogous activities with their friends to attain happiness.
+
+This pattern underscores a universal inclination toward certain shared pursuits that foster joy and fulfillment among diverse cultures. Despite geographical and cultural differences, the essence of bonding with friends through similar activities appears to be a fundamental element of human happiness transcending borders.
+
+Below are some happy moments that associated with friend in US:
+
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+hm_data_USA[grepl("friend",hm_data_USA$text),"original_hm"][1:5,]
+```
+
+
+Below are some happy moments that associated with friend not in US:
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+hm_data_notUSA[grepl("friend",hm_data_notUSA$text),"original_hm"][1:5,]
+```
+
+
+### Part 7 - Conclusion
+
+1.People commonly find their sources of happiness either through achieving personal objectives or through experiencing affection. It's worth noting that men tend to experience happiness by completing tasks or reaching milestones, while women often find happiness through meaningful relationships and connections.
+
+2.When describing their moments of happiness, men often employ action-oriented verbs, accentuating their accomplishments. Conversely, women commonly link individuals or relationships with the actions that lead to their happiness.
+
+3. The term "friend" stands out in narratives of happiness. Both men and women value the companionship of friends; however, their preferred activities with friends diverge. Men generally relish "game," whereas women derive joy from "celebration" and engaging in "surprise" activities. A commonality among both groups is their enjoyment of shared meals and enjoying birthdays with their friends.
+
+4. Regardless of where people are situated, individuals universally value and treasure spending meaningful time with their friends, and the activities they partake in together demonstrate striking similarities.
+
+
+
+
